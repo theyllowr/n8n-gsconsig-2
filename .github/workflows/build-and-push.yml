@@ -59,14 +59,25 @@ jobs:
           LICENSE_FILE="/usr/local/lib/node_modules/n8n/dist/license.js"
           if [ -f "$LICENSE_FILE" ]; then
             echo "📝 Patching $LICENSE_FILE..."
-            # Substituir método isLicensed para retornar sempre true
+            
+            # Bypass isLicensed - retornar sempre true
             sed -i 's/isLicensed(feature) {$/isLicensed(feature) { return true; \/\/ BYPASS/' "$LICENSE_FILE"
-            echo "✅ license.js patched"
+            
+            # Bypass getPlanName - retornar "Enterprise" ao invés de "Community"
+            sed -i "s/return this\.getValue('planName') ?? 'Community';/return 'Enterprise'; \/\/ BYPASS/" "$LICENSE_FILE"
+            
+            # Bypass getConsumerId - retornar um ID válido
+            sed -i "s/return this\.manager?.getConsumerId() ?? 'unknown';/return 'enterprise-bypass'; \/\/ BYPASS/" "$LICENSE_FILE"
+            
+            # Bypass isWithinUsersLimit - sempre true
+            sed -i 's/isWithinUsersLimit() {$/isWithinUsersLimit() { return true; \/\/ BYPASS/' "$LICENSE_FILE"
+            
+            echo "✅ license.js patched (isLicensed, getPlanName, getConsumerId, isWithinUsersLimit)"
           else
             echo "⚠️  $LICENSE_FILE not found"
           fi
           
-          # Patch 2: Procurar por license-state.js ou similar
+          # Patch 2: Procurar por outros arquivos de licença
           find /usr/local/lib/node_modules -name "*license*.js" -type f 2>/dev/null | while read file; do
             if grep -q "isLicensed.*feature.*{" "$file" 2>/dev/null; then
               echo "📝 Found isLicensed in: $file"
