@@ -72,7 +72,10 @@ jobs:
             # Bypass isWithinUsersLimit - sempre true
             sed -i 's/isWithinUsersLimit() {$/isWithinUsersLimit() { return true; \/\/ BYPASS/' "$LICENSE_FILE"
             
-            echo "✅ license.js patched (isLicensed, getPlanName, getConsumerId, isWithinUsersLimit)"
+            # Bypass getValue - retornar -1 (ilimitado) para todas as quotas
+            sed -i 's/getValue(feature) {$/getValue(feature) { return -1; \/\/ BYPASS/' "$LICENSE_FILE"
+            
+            echo "✅ license.js patched (isLicensed, getPlanName, getConsumerId, isWithinUsersLimit, getValue)"
           else
             echo "⚠️  $LICENSE_FILE not found"
           fi
