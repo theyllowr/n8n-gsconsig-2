@@ -29,107 +29,11 @@ jobs:
       - name: 📥 Checkout n8n-bypass repository
         uses: actions/checkout@v4
 
-      - name: 🔧 Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: 📦 Clone n8n official repository
+      - name: 🔍 Determine N8N version
         run: |
           N8N_VERSION="${{ github.event.inputs.n8n_version || 'latest' }}"
-          
-          echo "🔍 Cloning n8n repository..."
-          git clone --depth 1 --single-branch https://github.com/n8n-io/n8n.git /tmp/n8n
-          
-          cd /tmp/n8n
-          
-          if [ "$N8N_VERSION" != "latest" ]; then
-            echo "📌 Checking out version: $N8N_VERSION"
-            git fetch --depth 1 origin tag "n8n@$N8N_VERSION"
-            git checkout "n8n@$N8N_VERSION"
-          fi
-          
-          echo "✅ N8N version: $(git describe --tags --always)"
-          echo "N8N_VERSION=$(git describe --tags --always)" >> $GITHUB_ENV
-
-      - name: 🩹 Apply license bypass patches
-        run: |
-          echo "🩹 Applying patches to n8n source code..."
-          
-          # Aplicar patch no license.ts principal
-          LICENSE_FILE="/tmp/n8n/packages/cli/src/license.ts"
-          if [ -f "$LICENSE_FILE" ]; then
-            echo "📝 Patching $LICENSE_FILE..."
-            
-            # Backup original
-            cp "$LICENSE_FILE" "${LICENSE_FILE}.backup"
-            
-            # Aplicar patch no método isLicensed - Método 1: Bypass Global
-            sed -i 's/isLicensed(feature: BooleanLicenseFeature) {/isLicensed(feature: BooleanLicenseFeature) {\n\t\t\/\/ BYPASS GLOBAL - TODAS FUNCIONALIDADES PREMIUM LIBERADAS/' "$LICENSE_FILE"
-            sed -i '/BYPASS GLOBAL - TODAS FUNCIONALIDADES PREMIUM LIBERADAS/,/return this\.manager.*hasFeatureEnabled/ {
-              /return this\.manager.*hasFeatureEnabled/c\
-              \t\treturn true;
-            }' "$LICENSE_FILE"
-            
-            # Aplicar patch no método getValue para quotas ilimitadas
-            # Procurar pelo método getValue e substituir
-            awk '
-              /getValue<T extends keyof FeatureReturnType>\(feature: T\): FeatureReturnType\[T\] {/ {
-                print $0
-                print "\t\t// BYPASS QUOTAS - Valores ilimitados"
-                print "\t\tconst quotaFeatures = ["
-                print "\t\t\t\"quota:activeWorkflows\","
-                print "\t\t\t\"quota:maxVariables\","
-                print "\t\t\t\"quota:users\","
-                print "\t\t\t\"quota:workflowHistoryPrune\","
-                print "\t\t\t\"quota:maxTeamProjects\","
-                print "\t\t\t\"quota:aiCredits\""
-                print "\t\t];"
-                print "\t\t"
-                print "\t\tif (quotaFeatures.some(q => feature.toString().includes(q))) {"
-                print "\t\t\treturn -1 as FeatureReturnType[T];"
-                print "\t\t}"
-                print "\t\t"
-                next
-              }
-              { print }
-            ' "$LICENSE_FILE" > "${LICENSE_FILE}.tmp" && mv "${LICENSE_FILE}.tmp" "$LICENSE_FILE"
-            
-            echo "✅ License.ts patched successfully"
-          else
-            echo "⚠️ Warning: $LICENSE_FILE not found"
-          fi
-          
-          # Aplicar patch no license-state.ts (backend-common)
-          LICENSE_STATE_FILE="/tmp/n8n/packages/@n8n/backend-common/src/license-state.ts"
-          if [ -f "$LICENSE_STATE_FILE" ]; then
-            echo "📝 Patching $LICENSE_STATE_FILE..."
-            
-            # Backup original
-            cp "$LICENSE_STATE_FILE" "${LICENSE_STATE_FILE}.backup"
-            
-            # Aplicar bypass adicional
-            sed -i '/isLicensed(feature: BooleanLicenseFeature): boolean {/,/return this\.licenseProvider\.isLicensed/ {
-              /return this\.licenseProvider\.isLicensed/c\
-              \t\t\/\/ BYPASS ADICIONAL\n\t\treturn true;
-            }' "$LICENSE_STATE_FILE"
-            
-            echo "✅ License-state.ts patched successfully"
-          else
-            echo "⚠️ Warning: $LICENSE_STATE_FILE not found"
-          fi
-          
-          echo "🎉 All patches applied successfully!"
-
-      - name: 🔍 Verify patches
-        run: |
-          echo "🔍 Verifying patches..."
-          
-          echo "--- License.ts isLicensed method ---"
-          grep -A 3 "isLicensed(feature: BooleanLicenseFeature)" /tmp/n8n/packages/cli/src/license.ts || echo "Method not found"
-          
-          echo -e "\n--- License-state.ts isLicensed method ---"
-          grep -A 3 "isLicensed(feature: BooleanLicenseFeature)" /tmp/n8n/packages/@n8n/backend-common/src/license-state.ts || echo "Method not found"
+          echo "N8N_VERSION=$N8N_VERSION" >> $GITHUB_ENV
+          echo "✅ Will build n8n version: $N8N_VERSION"
 
       - name: 🔐 Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
@@ -143,24 +47,77 @@ jobs:
         run: |
           gcloud auth configure-docker ${{ env.ARTIFACT_REGISTRY_REGION }}-docker.pkg.dev
 
+      - name: 📝 Create patch script for runtime
+        run: |
+          mkdir -p /tmp/n8n-custom
+          cat > /tmp/n8n-custom/apply-runtime-patch.sh << 'PATCH_EOF'
+          #!/bin/sh
+          set -e
+          
+          echo "🩹 Applying license bypass patches at runtime..."
+          
+          # Patch 1: License.ts - Método isLicensed (bypass global)
+          LICENSE_FILE="/usr/local/lib/node_modules/n8n/dist/license/License.js"
+          if [ -f "$LICENSE_FILE" ]; then
+            echo "📝 Patching $LICENSE_FILE..."
+            sed -i 's/isLicensed(feature) {/isLicensed(feature) { return true; \/\/ BYPASS/' "$LICENSE_FILE"
+            echo "✅ License.ts patched"
+          fi
+          
+          # Patch 2: License-state.ts
+          LICENSE_STATE_FILE="/usr/local/lib/node_modules/n8n/dist/license-state.js"
+          if [ -f "$LICENSE_STATE_FILE" ]; then
+            echo "📝 Patching $LICENSE_STATE_FILE..."
+            sed -i 's/isLicensed(feature) {/isLicensed(feature) { return true; \/\/ BYPASS/' "$LICENSE_STATE_FILE"
+            echo "✅ License-state.ts patched"
+          fi
+          
+          echo "🎉 All patches applied successfully!"
+          PATCH_EOF
+          
+          chmod +x /tmp/n8n-custom/apply-runtime-patch.sh
+
+      - name: 📝 Create custom Dockerfile
+        run: |
+          cat > /tmp/n8n-custom/Dockerfile << 'DOCKERFILE_EOF'
+          ARG N8N_VERSION=latest
+          FROM n8nio/n8n:${N8N_VERSION}
+          
+          USER root
+          
+          # Copiar script de patch
+          COPY apply-runtime-patch.sh /docker-entrypoint.d/apply-runtime-patch.sh
+          RUN chmod +x /docker-entrypoint.d/apply-runtime-patch.sh
+          
+          # Aplicar patches
+          RUN /docker-entrypoint.d/apply-runtime-patch.sh
+          
+          USER node
+          
+          LABEL maintainer="GSConsig"
+          LABEL description="N8N with enterprise license bypass"
+          LABEL version="${N8N_VERSION}"
+          DOCKERFILE_EOF
+
       - name: 🔧 Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: 🐳 Build Docker image (AMD64 only)
         run: |
-          cd /tmp/n8n
+          cd /tmp/n8n-custom
           
           IMAGE_TAG="${{ env.ARTIFACT_REGISTRY_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.ARTIFACT_REGISTRY_REPO }}/${{ env.IMAGE_NAME }}:${{ env.N8N_VERSION }}"
           IMAGE_TAG_LATEST="${{ env.ARTIFACT_REGISTRY_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.ARTIFACT_REGISTRY_REPO }}/${{ env.IMAGE_NAME }}:latest"
           
           echo "🏗️ Building Docker image (linux/amd64): $IMAGE_TAG"
+          echo "📦 Base image: n8nio/n8n:${{ env.N8N_VERSION }}"
           
           docker buildx build \
             --platform linux/amd64 \
             --tag "$IMAGE_TAG" \
             --tag "$IMAGE_TAG_LATEST" \
             --build-arg N8N_VERSION="${{ env.N8N_VERSION }}" \
-            --file docker/images/n8n/Dockerfile \
+            --file Dockerfile \
             --load \
             .
           
