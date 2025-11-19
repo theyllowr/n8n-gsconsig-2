@@ -60,8 +60,8 @@ jobs:
           if [ -f "$LICENSE_FILE" ]; then
             echo "📝 Patching $LICENSE_FILE..."
             
-            # Bypass isLicensed - retornar sempre true
-            sed -i 's/isLicensed(feature) {$/isLicensed(feature) { return true; \/\/ BYPASS/' "$LICENSE_FILE"
+            # Bypass isLicensed - PRIMEIRO adicionar verificações especiais, DEPOIS o bypass global
+            # NÃO adicionar return true imediatamente, pois isso ignora as verificações seguintes
             
             # Bypass getPlanName - retornar "Enterprise" ao invés de "Community"
             sed -i "s/return this\.getValue('planName') ?? 'Community';/return 'Enterprise'; \/\/ BYPASS/" "$LICENSE_FILE"
@@ -86,6 +86,8 @@ jobs:
               print "        // Features que quando TRUE significam DESABILITADO"
               print "        if (feature === LICENSE_FEATURES.API_DISABLED) { return false; }"
               print "        if (feature === LICENSE_FEATURES.SHOW_NON_PROD_BANNER) { return false; }"
+              print "        // BYPASS GLOBAL - todas outras features retornam true"
+              print "        return true;"
               next
             }1' "$LICENSE_FILE" > "$LICENSE_FILE.tmp" && mv "$LICENSE_FILE.tmp" "$LICENSE_FILE"
             
