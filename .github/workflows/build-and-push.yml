@@ -1,4 +1,4 @@
-name: Build and Push n8n Custom to Artifact Registry
+name: Build and Push n8n Custom to GCR
 
 on:
   push:
@@ -12,10 +12,9 @@ on:
         default: 'latest'
 
 env:
-  GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-  ARTIFACT_REGISTRY_REGION: us-central1  # Ajustar conforme sua região
-  ARTIFACT_REGISTRY_REPO: n8n  # Nome do repositório criado na interface
-  IMAGE_NAME: n8n-custom
+  GCP_PROJECT_ID: n8ngsconsig
+  GCR_HOSTNAME: gcr.io
+  IMAGE_NAME: n8n-bypassed
 
 jobs:
   build-and-push:
@@ -43,9 +42,9 @@ jobs:
       - name: 🛠️ Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: 🔧 Configure Docker for Artifact Registry
+      - name: 🔧 Configure Docker for GCR
         run: |
-          gcloud auth configure-docker ${{ env.ARTIFACT_REGISTRY_REGION }}-docker.pkg.dev
+          gcloud auth configure-docker gcr.io
 
       - name: 📝 Create patch script for runtime
         run: |
@@ -106,8 +105,8 @@ jobs:
         run: |
           cd /tmp/n8n-custom
           
-          IMAGE_TAG="${{ env.ARTIFACT_REGISTRY_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.ARTIFACT_REGISTRY_REPO }}/${{ env.IMAGE_NAME }}:${{ env.N8N_VERSION }}"
-          IMAGE_TAG_LATEST="${{ env.ARTIFACT_REGISTRY_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.ARTIFACT_REGISTRY_REPO }}/${{ env.IMAGE_NAME }}:latest"
+          IMAGE_TAG="${{ env.GCR_HOSTNAME }}/${{ env.GCP_PROJECT_ID }}/${{ env.IMAGE_NAME }}:${{ env.N8N_VERSION }}"
+          IMAGE_TAG_LATEST="${{ env.GCR_HOSTNAME }}/${{ env.GCP_PROJECT_ID }}/${{ env.IMAGE_NAME }}:latest"
           
           echo "🏗️ Building Docker image (linux/amd64): $IMAGE_TAG"
           echo "📦 Base image: n8nio/n8n:${{ env.N8N_VERSION }}"
@@ -124,9 +123,9 @@ jobs:
           echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
           echo "IMAGE_TAG_LATEST=$IMAGE_TAG_LATEST" >> $GITHUB_ENV
 
-      - name: 🚀 Push to Artifact Registry
+      - name: 🚀 Push to GCR
         run: |
-          echo "📤 Pushing images to Artifact Registry..."
+          echo "📤 Pushing images to GCR (gcr.io)..."
           
           docker push ${{ env.IMAGE_TAG }}
           docker push ${{ env.IMAGE_TAG_LATEST }}
