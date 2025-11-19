@@ -1,0 +1,38 @@
+# N8N Build Artifacts
+/tmp/n8n/
+*.backup
+
+# Docker
+.dockerignore
+
+# GCP
+key.json
+*.json
+!package.json
+!tsconfig.json
+
+# Node
+node_modules/
+npm-debug.log
+yarn-error.log
+pnpm-debug.log
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log

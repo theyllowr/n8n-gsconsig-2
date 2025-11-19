@@ -1,0 +1,198 @@
+name: Build and Push n8n Custom to Artifact Registry
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:  # Permite executar manualmente
+    inputs:
+      n8n_version:
+        description: 'N8N version to build (e.g., latest, 1.65.2)'
+        required: false
+        default: 'latest'
+
+env:
+  GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  ARTIFACT_REGISTRY_REGION: us-central1  # Ajustar conforme sua região
+  ARTIFACT_REGISTRY_REPO: n8n  # Nome do repositório criado na interface
+  IMAGE_NAME: n8n-custom
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: 📥 Checkout n8n-bypass repository
+        uses: actions/checkout@v4
+
+      - name: 🔧 Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 📦 Clone n8n official repository
+        run: |
+          N8N_VERSION="${{ github.event.inputs.n8n_version || 'latest' }}"
+          
+          echo "🔍 Cloning n8n repository..."
+          git clone --depth 1 --single-branch https://github.com/n8n-io/n8n.git /tmp/n8n
+          
+          cd /tmp/n8n
+          
+          if [ "$N8N_VERSION" != "latest" ]; then
+            echo "📌 Checking out version: $N8N_VERSION"
+            git fetch --depth 1 origin tag "n8n@$N8N_VERSION"
+            git checkout "n8n@$N8N_VERSION"
+          fi
+          
+          echo "✅ N8N version: $(git describe --tags --always)"
+          echo "N8N_VERSION=$(git describe --tags --always)" >> $GITHUB_ENV
+
+      - name: 🩹 Apply license bypass patches
+        run: |
+          echo "🩹 Applying patches to n8n source code..."
+          
+          # Aplicar patch no license.ts principal
+          LICENSE_FILE="/tmp/n8n/packages/cli/src/license.ts"
+          if [ -f "$LICENSE_FILE" ]; then
+            echo "📝 Patching $LICENSE_FILE..."
+            
+            # Backup original
+            cp "$LICENSE_FILE" "${LICENSE_FILE}.backup"
+            
+            # Aplicar patch no método isLicensed - Método 1: Bypass Global
+            sed -i 's/isLicensed(feature: BooleanLicenseFeature) {/isLicensed(feature: BooleanLicenseFeature) {\n\t\t\/\/ BYPASS GLOBAL - TODAS FUNCIONALIDADES PREMIUM LIBERADAS/' "$LICENSE_FILE"
+            sed -i '/BYPASS GLOBAL - TODAS FUNCIONALIDADES PREMIUM LIBERADAS/,/return this\.manager.*hasFeatureEnabled/ {
+              /return this\.manager.*hasFeatureEnabled/c\
+              \t\treturn true;
+            }' "$LICENSE_FILE"
+            
+            # Aplicar patch no método getValue para quotas ilimitadas
+            # Procurar pelo método getValue e substituir
+            awk '
+              /getValue<T extends keyof FeatureReturnType>\(feature: T\): FeatureReturnType\[T\] {/ {
+                print $0
+                print "\t\t// BYPASS QUOTAS - Valores ilimitados"
+                print "\t\tconst quotaFeatures = ["
+                print "\t\t\t\"quota:activeWorkflows\","
+                print "\t\t\t\"quota:maxVariables\","
+                print "\t\t\t\"quota:users\","
+                print "\t\t\t\"quota:workflowHistoryPrune\","
+                print "\t\t\t\"quota:maxTeamProjects\","
+                print "\t\t\t\"quota:aiCredits\""
+                print "\t\t];"
+                print "\t\t"
+                print "\t\tif (quotaFeatures.some(q => feature.toString().includes(q))) {"
+                print "\t\t\treturn -1 as FeatureReturnType[T];"
+                print "\t\t}"
+                print "\t\t"
+                next
+              }
+              { print }
+            ' "$LICENSE_FILE" > "${LICENSE_FILE}.tmp" && mv "${LICENSE_FILE}.tmp" "$LICENSE_FILE"
+            
+            echo "✅ License.ts patched successfully"
+          else
+            echo "⚠️ Warning: $LICENSE_FILE not found"
+          fi
+          
+          # Aplicar patch no license-state.ts (backend-common)
+          LICENSE_STATE_FILE="/tmp/n8n/packages/@n8n/backend-common/src/license-state.ts"
+          if [ -f "$LICENSE_STATE_FILE" ]; then
+            echo "📝 Patching $LICENSE_STATE_FILE..."
+            
+            # Backup original
+            cp "$LICENSE_STATE_FILE" "${LICENSE_STATE_FILE}.backup"
+            
+            # Aplicar bypass adicional
+            sed -i '/isLicensed(feature: BooleanLicenseFeature): boolean {/,/return this\.licenseProvider\.isLicensed/ {
+              /return this\.licenseProvider\.isLicensed/c\
+              \t\t\/\/ BYPASS ADICIONAL\n\t\treturn true;
+            }' "$LICENSE_STATE_FILE"
+            
+            echo "✅ License-state.ts patched successfully"
+          else
+            echo "⚠️ Warning: $LICENSE_STATE_FILE not found"
+          fi
+          
+          echo "🎉 All patches applied successfully!"
+
+      - name: 🔍 Verify patches
+        run: |
+          echo "🔍 Verifying patches..."
+          
+          echo "--- License.ts isLicensed method ---"
+          grep -A 3 "isLicensed(feature: BooleanLicenseFeature)" /tmp/n8n/packages/cli/src/license.ts || echo "Method not found"
+          
+          echo -e "\n--- License-state.ts isLicensed method ---"
+          grep -A 3 "isLicensed(feature: BooleanLicenseFeature)" /tmp/n8n/packages/@n8n/backend-common/src/license-state.ts || echo "Method not found"
+
+      - name: 🔐 Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: 🛠️ Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: 🔧 Configure Docker for Artifact Registry
+        run: |
+          gcloud auth configure-docker ${{ env.ARTIFACT_REGISTRY_REGION }}-docker.pkg.dev
+
+      - name: 🔧 Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 🐳 Build Docker image (AMD64 only)
+        run: |
+          cd /tmp/n8n
+          
+          IMAGE_TAG="${{ env.ARTIFACT_REGISTRY_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.ARTIFACT_REGISTRY_REPO }}/${{ env.IMAGE_NAME }}:${{ env.N8N_VERSION }}"
+          IMAGE_TAG_LATEST="${{ env.ARTIFACT_REGISTRY_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.ARTIFACT_REGISTRY_REPO }}/${{ env.IMAGE_NAME }}:latest"
+          
+          echo "🏗️ Building Docker image (linux/amd64): $IMAGE_TAG"
+          
+          docker buildx build \
+            --platform linux/amd64 \
+            --tag "$IMAGE_TAG" \
+            --tag "$IMAGE_TAG_LATEST" \
+            --build-arg N8N_VERSION="${{ env.N8N_VERSION }}" \
+            --file docker/images/n8n/Dockerfile \
+            --load \
+            .
+          
+          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+          echo "IMAGE_TAG_LATEST=$IMAGE_TAG_LATEST" >> $GITHUB_ENV
+
+      - name: 🚀 Push to Artifact Registry
+        run: |
+          echo "📤 Pushing images to Artifact Registry..."
+          
+          docker push ${{ env.IMAGE_TAG }}
+          docker push ${{ env.IMAGE_TAG_LATEST }}
+          
+          echo "✅ Images pushed successfully!"
+          echo "📦 Image: ${{ env.IMAGE_TAG }}"
+          echo "📦 Latest: ${{ env.IMAGE_TAG_LATEST }}"
+
+      - name: 📊 Summary
+        run: |
+          echo "## 🎉 Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Image Details" >> $GITHUB_STEP_SUMMARY
+          echo "- **N8N Version:** ${{ env.N8N_VERSION }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image Tag:** \`${{ env.IMAGE_TAG }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Latest Tag:** \`${{ env.IMAGE_TAG_LATEST }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Applied Patches" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ License bypass (global)" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Quota bypass (unlimited)" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ License state bypass" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Pull Command" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ${{ env.IMAGE_TAG_LATEST }}" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
