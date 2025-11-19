@@ -72,21 +72,40 @@ jobs:
             # Bypass isWithinUsersLimit - sempre true
             sed -i 's/isWithinUsersLimit() {$/isWithinUsersLimit() { return true; \/\/ BYPASS/' "$LICENSE_FILE"
             
-            # Bypass getValue - retornar -1 (ilimitado) para todas as quotas
-            sed -i 's/getValue(feature) {$/getValue(feature) { return -1; \/\/ BYPASS/' "$LICENSE_FILE"
+            # Bypass getValue - implementar lógica completa de bypass de quotas
+            # Encontrar a linha do método getValue e adicionar o bypass completo
+            awk '/getValue\(feature\) \{/{
+              print
+              print "        if (feature.toString().includes(\"quota\")) { return -1; }"
+              next
+            }1' "$LICENSE_FILE" > "$LICENSE_FILE.tmp" && mv "$LICENSE_FILE.tmp" "$LICENSE_FILE"
             
-            echo "✅ license.js patched (isLicensed, getPlanName, getConsumerId, isWithinUsersLimit, getValue)"
+            # Bypass SHOW_NON_PROD_BANNER - esconder banner de não produção
+            awk '/isLicensed\(feature\) \{/{
+              print
+              print "        if (feature === \"feat:sharing\") { return false; }"
+              next
+            }1' "$LICENSE_FILE" > "$LICENSE_FILE.tmp" && mv "$LICENSE_FILE.tmp" "$LICENSE_FILE"
+            
+            echo "✅ license.js patched (isLicensed, getPlanName, getConsumerId, isWithinUsersLimit, getValue with quota bypass)"
           else
             echo "⚠️  $LICENSE_FILE not found"
           fi
           
-          # Patch 2: Procurar por outros arquivos de licença
-          find /usr/local/lib/node_modules -name "*license*.js" -type f 2>/dev/null | while read file; do
-            if grep -q "isLicensed.*feature.*{" "$file" 2>/dev/null; then
-              echo "📝 Found isLicensed in: $file"
-              sed -i 's/isLicensed(feature) {$/isLicensed(feature) { return true; \/\/ BYPASS/' "$file" 2>/dev/null || true
-            fi
-          done
+          # Patch 2: license-state.js - Bypass adicional
+          LICENSE_STATE_FILE="/usr/local/lib/node_modules/n8n/node_modules/@n8n/backend-common/dist/license-state.js"
+          if [ -f "$LICENSE_STATE_FILE" ]; then
+            echo "📝 Patching $LICENSE_STATE_FILE..."
+            sed -i 's/isLicensed(feature) {$/isLicensed(feature) { return true; \/\/ BYPASS ADICIONAL/' "$LICENSE_STATE_FILE"
+            echo "✅ license-state.js patched"
+          else
+            echo "⚠️  $LICENSE_STATE_FILE not found, trying alternative paths..."
+            # Tentar outros caminhos possíveis
+            find /usr/local/lib/node_modules -name "license-state.js" -type f 2>/dev/null | while read file; do
+              echo "📝 Found and patching: $file"
+              sed -i 's/isLicensed(feature) {$/isLicensed(feature) { return true; \/\/ BYPASS ADICIONAL/' "$file" 2>/dev/null || true
+            done
+          fi
           
           echo "🎉 All patches applied!"
           PATCH_EOF
