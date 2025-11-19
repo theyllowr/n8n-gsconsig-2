@@ -46,35 +46,38 @@ jobs:
         run: |
           gcloud auth configure-docker gcr.io
 
-      - name: 📝 Create patch script for runtime
+      - name: 📝 Create patch script
         run: |
           mkdir -p /tmp/n8n-custom
-          cat > /tmp/n8n-custom/apply-runtime-patch.sh << 'PATCH_EOF'
+          cat > /tmp/n8n-custom/apply-patches.sh << 'PATCH_EOF'
           #!/bin/sh
           set -e
           
-          echo "🩹 Applying license bypass patches at runtime..."
+          echo "🩹 Applying license bypass patches..."
           
-          # Patch 1: License.ts - Método isLicensed (bypass global)
-          LICENSE_FILE="/usr/local/lib/node_modules/n8n/dist/license/License.js"
+          # Patch 1: license.js - Método isLicensed (bypass global)
+          LICENSE_FILE="/usr/local/lib/node_modules/n8n/dist/license.js"
           if [ -f "$LICENSE_FILE" ]; then
             echo "📝 Patching $LICENSE_FILE..."
-            sed -i 's/isLicensed(feature) {/isLicensed(feature) { return true; \/\/ BYPASS/' "$LICENSE_FILE"
-            echo "✅ License.ts patched"
+            # Substituir método isLicensed para retornar sempre true
+            sed -i 's/isLicensed(feature) {$/isLicensed(feature) { return true; \/\/ BYPASS/' "$LICENSE_FILE"
+            echo "✅ license.js patched"
+          else
+            echo "⚠️  $LICENSE_FILE not found"
           fi
           
-          # Patch 2: License-state.ts
-          LICENSE_STATE_FILE="/usr/local/lib/node_modules/n8n/dist/license-state.js"
-          if [ -f "$LICENSE_STATE_FILE" ]; then
-            echo "📝 Patching $LICENSE_STATE_FILE..."
-            sed -i 's/isLicensed(feature) {/isLicensed(feature) { return true; \/\/ BYPASS/' "$LICENSE_STATE_FILE"
-            echo "✅ License-state.ts patched"
-          fi
+          # Patch 2: Procurar por license-state.js ou similar
+          find /usr/local/lib/node_modules -name "*license*.js" -type f 2>/dev/null | while read file; do
+            if grep -q "isLicensed.*feature.*{" "$file" 2>/dev/null; then
+              echo "📝 Found isLicensed in: $file"
+              sed -i 's/isLicensed(feature) {$/isLicensed(feature) { return true; \/\/ BYPASS/' "$file" 2>/dev/null || true
+            fi
+          done
           
-          echo "🎉 All patches applied successfully!"
+          echo "🎉 All patches applied!"
           PATCH_EOF
           
-          chmod +x /tmp/n8n-custom/apply-runtime-patch.sh
+          chmod +x /tmp/n8n-custom/apply-patches.sh
 
       - name: 📝 Create custom Dockerfile
         run: |
@@ -84,12 +87,11 @@ jobs:
           
           USER root
           
-          # Copiar script de patch
-          COPY apply-runtime-patch.sh /docker-entrypoint.d/apply-runtime-patch.sh
-          RUN chmod +x /docker-entrypoint.d/apply-runtime-patch.sh
-          
-          # Aplicar patches
-          RUN /docker-entrypoint.d/apply-runtime-patch.sh
+          # Copiar e executar script de patch
+          COPY apply-patches.sh /tmp/apply-patches.sh
+          RUN chmod +x /tmp/apply-patches.sh && \
+              /tmp/apply-patches.sh && \
+              rm /tmp/apply-patches.sh
           
           USER node
           
