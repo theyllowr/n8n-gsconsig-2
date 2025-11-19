@@ -80,12 +80,18 @@ jobs:
               next
             }1' "$LICENSE_FILE" > "$LICENSE_FILE.tmp" && mv "$LICENSE_FILE.tmp" "$LICENSE_FILE"
             
-            # Bypass SHOW_NON_PROD_BANNER - esconder banner de não produção
+            # Bypass features que precisam retornar FALSE (inversão de lógica)
             awk '/isLicensed\(feature\) \{/{
               print
-              print "        if (feature === \"feat:sharing\") { return false; }"
+              print "        // Features que quando TRUE significam DESABILITADO"
+              print "        if (feature === LICENSE_FEATURES.API_DISABLED) { return false; }"
+              print "        if (feature === LICENSE_FEATURES.SHOW_NON_PROD_BANNER) { return false; }"
               next
             }1' "$LICENSE_FILE" > "$LICENSE_FILE.tmp" && mv "$LICENSE_FILE.tmp" "$LICENSE_FILE"
+            
+            # Substituir referências a LICENSE_FEATURES por strings diretas (caso constantes não estejam disponíveis)
+            sed -i 's/=== LICENSE_FEATURES\.API_DISABLED/=== "feat:apiDisabled"/g' "$LICENSE_FILE"
+            sed -i 's/=== LICENSE_FEATURES\.SHOW_NON_PROD_BANNER/=== "feat:showNonProdBanner"/g' "$LICENSE_FILE"
             
             echo "✅ license.js patched (isLicensed, getPlanName, getConsumerId, isWithinUsersLimit, getValue with quota bypass)"
           else
